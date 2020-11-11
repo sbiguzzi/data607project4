@@ -1,0 +1,278 @@
+---
+title: "Project 4 - Document Classification"
+author: "Stefano Biguzzi"
+date: "11/11/2020"
+output:
+  prettydoc::html_pretty:
+    highlight: github
+    theme: hpstr
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, message = F, warning = F, fig.show = 'asis', fig.align = 'center')
+```
+
+# ***Project guidelines***
+*It can be useful to be able to classify new "test" documents using already classified "training" documents.  A common example is using a corpus of labeled spam and ham (non-spam) e-mails to predict whether or not a new document is spam.*
+
+*For this project, you can start with a spam/ham data set, then predict the class of new documents (either withheld from the training data set or from another source such as your own spam folder)*
+
+# Loading Libraries
+```{r}
+library(tidyverse)
+library(tm)
+library(quanteda)
+library(quanteda.textmodels)
+library(RColorBrewer)
+library(knitr)
+```
+
+# Introduction
+For this project I decided to work with SMS spam/ham data set found from the [University of California Irving Machine Learning Repository](http://archive.ics.uci.edu/ml/datasets/SMS+Spam+Collection). The data set has 5,574 SMS messages with 86.6% being ham and 13.4% being spam.
+
+The data set was downloaded from this link: [SMS Spam/Ham](http://archive.ics.uci.edu/ml/machine-learning-databases/00228/) and then saved on [GitHub](https://github.com/sbiguzzi/data607project4) and loaded from there.
+
+
+# Loading data
+```{r}
+#set url
+url <- "https://raw.githubusercontent.com/sbiguzzi/data607project4/main/SMSSpamCollection.txt"
+#load data
+text.df <- read.csv(url,sep = '\t',header = F, quote="", stringsAsFactors=FALSE)
+#rename columns
+colnames(text.df) <- c("Classification","Message")
+```
+
+The data seems to be pretty straightforward with one column to classify the message and one column with the full message, as seen in the top 10 rows.
+```{r, echo=F}
+kable(head(text.df,10),caption = "Data set example")
+```
+
+Summarizing the data we see that the numbers match what was given to us from the website.
+```{r, echo=F}
+kable(text.df %>%
+  count(Classification) %>%
+  mutate(prct = round(n/sum(n),3)), caption = "Data set counts")
+```
+
+
+# Data Cleaning
+The first step is to assign the text messages to a corpus and assign a label to them. This will allow us to tokenize and analyze both spam and ham text messages and allow us to classify them.
+
+To create the a corpus we first assign the messages to a text. We set a spam text and a ham text equal to `spam.text`
+```{r}
+#assign spam text
+spam.text <- text.df[which(text.df$Classification == "spam"),c("Message")]
+```
+and `ham.text`.
+```{r}
+#assign ham text
+ham.text <- text.df[which(text.df$Classification == "ham"),c("Message")]
+```
+Using the `quanteda` library `corpus()` function, we will then create a `spam.corpus`
+```{r}
+#create spam corpus
+spam.corpus <- corpus(spam.text)
+```
+and `ham.corpus`
+```{r}
+#create ham corpus
+ham.corpus <- corpus(ham.text)
+```
+
+We then create a `spam.dfm`, which is a matrix that will describe the frequency of terms that occur in `spam.text` corpus
+```{r}
+#spam tokens
+spam.dfm <- dfm(
+  spam.corpus,
+  #lower all variables
+  tolower = TRUE
+)
+```
+We also create a `ham.dfm` that will describe the frequency of terms that occur in the `ham.text`.
+```{r}
+#ham tokens
+ham.dfm <- dfm(
+  ham.corpus,
+  #lower all variables
+  tolower = TRUE
+)
+```
+
+# Descriptive analysis
+We want to create a word cloud to see what some of the most common words are for each `spam.dfm` and `ham.dfm`. This can help us further clean the data, like adding stop words, to create a easier to read word cloud.
+
+## Spam cleaning
+First we create a word cloud on the unclean dfm to understand the types of words and symbols we are seeing. From that we can understand how to clean the data.
+```{r, echo=F}
+textplot_wordcloud(spam.dfm,min.freq=18,
+                   min_size = 1,
+                   max_size = 5,
+                   color=brewer.pal(10, "BrBG"))
+title("Spam Wordcloud", col.main = "grey14")
+```
+
+Once we see the words we need to clean we can create the `clean.string()` function and use some regex to further clean the `spam.corpus` before running the corpus through the `clean.string` function. We then create a new dfm, `spam.dfm.clean`, with the cleaned corpus.
+```{r}
+#create clean string function
+clean.string <- function(x){
+  x <- tolower(x)
+  x <- removeWords(x,c(stopwords("SMART")))
+  x <- removePunctuation(x)
+  x <- stripWhitespace(x)
+  x <- removeNumbers(x)
+  return(x)}
+
+#spam cleaning
+spam.corpus <- gsub("[[:punct:]]","", spam.corpus)
+spam.corpus <- gsub("[^[:alnum:]]"," ", spam.corpus)
+spam.corpus <- gsub("*\\b[[:alpha:]]{1,2}\\b *"," ",spam.corpus)
+spam.corpus <- clean.string(spam.corpus)
+
+#creating clean spam dfm
+spam.dfm.clean <- dfm(
+  spam.corpus,
+  #lower all variables
+  tolower = TRUE,
+  #remove punctuation
+  removePunct = TRUE,
+  #removes @ and hashtags (#)
+  removeTwitter = TRUE,
+  #remove numbers
+  removeNumbers = TRUE,
+  #remove stop words using words from the SMART information retrieval system
+  remove=c(stopwords("SMART"),"call","â","£")
+)
+```
+
+We can then create a new word cloud to see how well we cleaned the data and we can see that the words we have now are easier to read which should allows us to understand what words show up most in a spam text message.
+
+```{r, echo=F}
+textplot_wordcloud(spam.dfm.clean,
+                   min_count = 18,
+                   min_size = 1,
+                   max_size = 5,
+                   color=brewer.pal(10, "BrBG"))
+title("Spam Clean Wordcloud", col.main = "grey14")
+```
+
+## Ham cleaning
+We can repeat the steps for the `ham.corpus` to clean that up as well. We see a lot of punctuation, stop words, numbers, and short words that will makes it hard to get a good sense of the words that occur in a ham text message.
+
+```{r, echo=F}
+textplot_wordcloud(ham.dfm,
+                   min.freq=40,
+                   min_size = 1,
+                   max_size = 5,
+                   color=brewer.pal(10, "BrBG"))
+title("Ham Wordcloud", col.main = "grey14")
+```
+We will run the `ham.corpus` through the same cleaning as the `spam.corpus` to create a cleaned dfm, `ham.dfm.clean`, and check the new word cloud to make sure we cleaned it enough.
+
+```{r}
+#spam cleaning
+ham.corpus <- gsub("[[:punct:]]|[^[:alnum:]]"," ", ham.corpus)
+ham.corpus <- gsub("*\\b[[:alpha:]]{1,2}\\b *"," ",ham.corpus)
+ham.corpus <- clean.string(ham.corpus)
+
+#creating clean spam dfm
+ham.dfm.clean <- dfm(
+  ham.corpus,
+  #lower all variables
+  tolower = TRUE,
+  #remove punctuation
+  removePunct = TRUE,
+  #removes @ and hashtags (#)
+  removeTwitter = TRUE,
+  #remove numbers
+  removeNumbers = TRUE,
+  #remove stop words using words from the SMART information retrieval system
+  remove=c(stopwords("SMART"),"call","£")
+)
+```
+
+The clean word cloud looks a little nicer than the original which will make it easier to understand which words we will give me weight to when creating a weighted dfm in the training data.
+```{r, echo=F}
+textplot_wordcloud(ham.dfm.clean,min.freq=25,
+                   min_size = 0.5,
+                   max_size = 4,
+                   color=brewer.pal(10, "BrBG"))
+title("Ham Clean Wordcloud", col.main = "grey14")
+```
+
+# Classification system
+To start the classification process we will split the `text.df` into 85% training data and 15% testing data. But before that we want to randomize the order of `text.df` to make sure there's no bias in the order of the spam and ham data.
+
+## Create test and training data
+We first want to randomize the order of the `text.df` to be able to get random test and training data.
+```{r}
+#randomizing order of text.df
+set.seed(1234)
+text.df <- text.df[sample(nrow(text.df)),]
+```
+
+### Training data
+Then we can create the training data and dfm. We want to also weight the dfm to give more weight to words that show up the most. If we reference the *Spam Clean Wordcloud* those words include free, prize, won, win, mobile. While referencing the *Ham Clean Wordcloud* it would be words like good, love, time, and day.
+```{r}
+#create training data and dfm
+train.df <- text.df[1:4738,]
+#assigning the messages to a text var
+train.text <- train.df$Message
+#creating a train dfm
+train.dfm <- dfm(train.text, tolower = T)
+#weighting the train dfm
+train.dfm <- dfm_tfidf(train.dfm)
+```
+
+### Test data
+Then we can repeat the steps to create the test data. We also weight the dfm for this data so words that come up the most in the ham and spam wordclouds have more weight than words that come up less.
+```{r}
+#create test data and dfm
+test.df <- text.df[4739:nrow(text.df),]
+#assigning the test messages to a text var
+test.text <- test.df$Message
+#creating test dfm
+test.dfm <- dfm(test.text,tolower = T)
+#weighting test dfm
+test.dfm <- dfm_tfidf(test.dfm)
+```
+We are now ready to create a text message classification model.
+
+## Create classifier model: Naive Bayesian vs Linear SVM
+We can use the `quanteda.textmodels` library that contains many different text classification models. We assign the train dfm as the dfm to reference for the model, while assigning the classification as the training *ham* and *spam* labels.
+
+### Naive Bayesian
+We can assign the naive bayesian model using the `textmodel_nb()` function and letting R know the training dfm and the labels.
+```{r}
+msg.nb.classifier <- textmodel_nb(train.dfm, train.df$Classification)
+```
+We then use the classifier to predict the test data and sort it by ham and spam.
+```{r}
+msg.nb.prediction <- predict(msg.nb.classifier, newdata = test.dfm, force = T)
+```
+We can see from the table below that the Naive Bayesian classifier classified 10 ham text messages as spam, an error rate of 1.4% while classifying 2 spam messages as ham, an error rate of 2.1%.
+```{r, echo=F}
+kable(table(msg.nb.prediction, test.df$Classification), caption = "Naive Bayesian Model")
+```
+
+### Linear SVM
+We set up the classification model and the prediction the same as above.
+```{r}
+#linear svm classifier
+msg.svm.classifier <- textmodel_svm(train.dfm, train.df$Classification)
+```
+```{r}
+#linear svm predictions
+msg.svm.prediction <- predict(msg.svm.classifier, newdata = test.dfm, force = T)
+```
+Using a linear support vector machine classifier we get the below results. We seem to have correctly classified 100% of the ham text messages. The error rate for the spam text messages was about 8.3%.
+```{r, echo=F}
+kable(table(msg.svm.prediction, test.df$Classification), caption = "Linear SVM Model")
+```
+
+# Conclusion
+
+Both models do a pretty excellent job of filtering ham and spam text messages. While the *Linear SVM* model does a better job of classifying ham messages the *Naive Bayesian* model does a better job of classifying the spam messages. Which model to use depends on a users acceptability of error. That is if a user wants to have less spam messages but is okay with having some ham messages classified as spam as well, they they should go with the *Naive Bayesian Model*. On the other hand, if a user is not willing to classify any ham text messages as spam, and is okay with having more spam text messages get incorrectly classified as ham, they should use the *Linear SVM Model*. 
+
